@@ -1,0 +1,9 @@
+{
+  "name": "com.astraglobal.gpt_tracker",
+  "description": "Native messaging host for ChatGPT Usage Tracker - reads Windows system username",
+  "path": "C:\\ProgramData\\GPTTracker\\get_username.bat",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://YOUR_EXTENSION_ID_HERE/"
+  ]
+}
