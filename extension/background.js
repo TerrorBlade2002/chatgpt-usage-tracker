@@ -5,7 +5,7 @@
 // ============================================================
 
 const NATIVE_HOST = "com.astraglobal.gpt_tracker";
-const DEFAULT_SERVER_URL = "https://your-railway-app.up.railway.app";
+const DEFAULT_SERVER_URL = "https://chatgpt-usage-tracker-production.up.railway.app";
 
 let systemUsername = null;
 let sessionId = null;
