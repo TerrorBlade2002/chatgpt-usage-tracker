@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GPT Usage Tracker - Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; color: #333; }
+  .header { background: #1a1a2e; color: #fff; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+  .header h1 { font-size: 20px; font-weight: 600; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+  .filters { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.1); display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+  .filter-group { display: flex; flex-direction: column; gap: 4px; }
+  .filter-group label { font-size: 12px; font-weight: 600; color: #666; text-transform: uppercase; }
+  .filter-group select, .filter-group input { padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; min-width: 160px; }
+  .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500; }
+  .btn-primary { background: #10a37f; color: #fff; }
+  .btn-primary:hover { background: #0e8f6e; }
+  .btn-export { background: #2563eb; color: #fff; }
+  .btn-export:hover { background: #1d4ed8; }
+  .quick-filters { display: flex; gap: 8px; align-items: flex-end; }
+  .quick-btn { padding: 6px 12px; background: #e8e8e8; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 13px; }
+  .quick-btn:hover, .quick-btn.active { background: #10a37f; color: #fff; border-color: #10a37f; }
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
+  .stat-card { background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .stat-card .label { font-size: 12px; color: #888; text-transform: uppercase; font-weight: 600; }
+  .stat-card .value { font-size: 28px; font-weight: 700; color: #1a1a2e; margin-top: 4px; }
+  .table-wrap { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: #f8f9fa; padding: 12px 16px; text-align: left; font-weight: 600; color: #555; border-bottom: 2px solid #eee; position: sticky; top: 0; }
+  td { padding: 10px 16px; border-bottom: 1px solid #f0f0f0; }
+  tr:hover { background: #f8fffe; }
+  .loading { text-align: center; padding: 40px; color: #888; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+  .badge-gpt { background: #e8f5e9; color: #2e7d32; }
+</style>
+</head><body>
+<div class="header">
+  <h1>ChatGPT Usage Tracker</h1>
+  <span id="lastRefresh">-</span>
+</div>
+
+<div class="container">
+  <div class="filters">
+    <div class="filter-group">
+      <label>From Date</label>
+      <input type="date" id="fromDate">
+    </div>
+    <div class="filter-group">
+      <label>To Date</label>
+      <input type="date" id="toDate">
+    </div>
+    <div class="filter-group">
+      <label>Custom GPT</label>
+      <select id="gptFilter"><option value="">All GPTs</option></select>
+    </div>
+    <div class="filter-group">
+      <label>Username</label>
+      <select id="userFilter"><option value="">All Users</option></select>
+    </div>
+    <div class="quick-filters">
+      <button class="quick-btn" onclick="setQuick('today')">Today</button>
+      <button class="quick-btn" onclick="setQuick('thisWeek')">This Week</button>
+      <button class="quick-btn" onclick="setQuick('thisMonth')">This Month</button>
+      <button class="quick-btn" onclick="setQuick('lastMonth')">Last Month</button>
+    </div>
+    <button class="btn btn-primary" onclick="applyFilters()">Apply</button>
+    <button class="btn btn-export" onclick="downloadCSV()">Download CSV</button>
+  </div>
+
+  <div class="stats-grid" id="statsGrid">
+    <div class="stat-card"><div class="label">Total Interactions</div><div class="value" id="statTotal">-</div></div>
+    <div class="stat-card"><div class="label">Unique Conversations</div><div class="value" id="statConvos">-</div></div>
+    <div class="stat-card"><div class="label">Unique Users</div><div class="value" id="statUsers">-</div></div>
+    <div class="stat-card"><div class="label">Active GPTs</div><div class="value" id="statGpts">-</div></div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>ID</th><th>Timestamp</th><th>Username</th><th>GPT Name</th>
+        <th>Conversation</th><th>Turn #</th><th>First Question</th><th>Session</th>
+      </tr></thead>
+      <tbody id="tableBody"><tr><td colspan="8" class="loading">Loading...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const API = window.location.origin;
+
+function fmt(d) { return d ? new Date(d).toLocaleString() : "-"; }
+function short(s, n) { return s && s.length > n ? s.substring(0, n) + "..." : (s || "-"); }
+
+async function loadFilters() {
+  const r = await fetch(API + "/api/filters");
+  const d = await r.json();
+  const gs = document.getElementById("gptFilter");
+  const us = document.getElementById("userFilter");
+  d.gpt_names.forEach(n => { const o = document.createElement("option"); o.value = n; o.textContent = n; gs.appendChild(o); });
+  d.usernames.forEach(n => { const o = document.createElement("option"); o.value = n; o.textContent = n; us.appendChild(o); });
+}
+
+function getParams() {
+  const p = new URLSearchParams();
+  const f = document.getElementById("fromDate").value;
+  const t = document.getElementById("toDate").value;
+  const g = document.getElementById("gptFilter").value;
+  const u = document.getElementById("userFilter").value;
+  if (f) p.set("from", f + "T00:00:00Z");
+  if (t) p.set("to", t + "T23:59:59Z");
+  if (g) p.set("gpt_name", g);
+  if (u) p.set("system_username", u);
+  return p.toString();
+}
+
+function setQuick(preset) {
+  const now = new Date();
+  const fd = document.getElementById("fromDate");
+  const td = document.getElementById("toDate");
+  td.value = now.toISOString().split("T")[0];
+
+  if (preset === "today") {
+    fd.value = td.value;
+  } else if (preset === "thisWeek") {
+    const d = new Date(now); d.setDate(d.getDate() - d.getDay());
+    fd.value = d.toISOString().split("T")[0];
+  } else if (preset === "thisMonth") {
+    fd.value = now.toISOString().split("T")[0].substring(0, 8) + "01";
+  } else if (preset === "lastMonth") {
+    const lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const le = new Date(now.getFullYear(), now.getMonth(), 0);
+    fd.value = lm.toISOString().split("T")[0];
+    td.value = le.toISOString().split("T")[0];
+  }
+  document.querySelectorAll(".quick-btn").forEach(b => b.classList.remove("active"));
+  event.target.classList.add("active");
+  applyFilters();
+}
+
+async function applyFilters() {
+  const params = getParams();
+  const [logsRes, statsRes] = await Promise.all([
+    fetch(API + "/api/reports?" + params),
+    fetch(API + "/api/stats?" + params),
+  ]);
+  const logsData = await logsRes.json();
+  const statsData = await statsRes.json();
+
+  // Update stats
+  const stats = statsData.stats || [];
+  document.getElementById("statTotal").textContent = stats.reduce((s, r) => s + parseInt(r.total_interactions), 0);
+  document.getElementById("statConvos").textContent = stats.reduce((s, r) => s + parseInt(r.total_conversations), 0);
+  document.getElementById("statUsers").textContent = stats.reduce((s, r) => s + parseInt(r.unique_users), 0);
+  document.getElementById("statGpts").textContent = stats.length;
+
+  // Update table
+  const tb = document.getElementById("tableBody");
+  if (!logsData.logs || logsData.logs.length === 0) {
+    tb.innerHTML = '<tr><td colspan="8" class="loading">No data found for selected filters</td></tr>';
+    return;
+  }
+  tb.innerHTML = logsData.logs.map(r => `<tr>
+    <td>${r.id}</td>
+    <td>${fmt(r.timestamp)}</td>
+    <td><strong>${r.system_username || "-"}</strong></td>
+    <td><span class="badge badge-gpt">${r.gpt_name}</span></td>
+    <td>${short(r.conversation_id, 12)}</td>
+    <td>${r.turn_number}</td>
+    <td>${short(r.first_question_summary, 40)}</td>
+    <td>${short(r.session_id, 8)}</td>
+  </tr>`).join("");
+
+  document.getElementById("lastRefresh").textContent = "Updated: " + new Date().toLocaleTimeString();
+}
+
+function downloadCSV() {
+  const params = getParams();
+  window.open(API + "/api/reports/csv?" + params, "_blank");
+}
+
+loadFilters();
+applyFilters();
+</script>
+</body></html>
