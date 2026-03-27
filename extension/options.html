@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html><head><title>GPT Tracker Settings</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 20px; max-width: 500px; background: #f9f9f9; }
+  h1 { font-size: 18px; color: #333; }
+  label { display: block; margin: 12px 0 4px; font-weight: 600; color: #555; }
+  input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; box-sizing: border-box; }
+  button { margin-top: 16px; padding: 10px 20px; background: #10a37f; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+  button:hover { background: #0e8f6e; }
+  .status { margin-top: 12px; padding: 8px; border-radius: 4px; font-size: 13px; }
+  .ok { background: #d4edda; color: #155724; }
+  .err { background: #f8d7da; color: #721c24; }
+  .info { margin-top: 20px; padding: 12px; background: #e8f4fd; border-radius: 4px; font-size: 13px; color: #0c5460; }
+</style>
+</head><body>
+<h1>ChatGPT Usage Tracker Settings</h1>
+
+<label for="serverUrl">Server URL</label>
+<input id="serverUrl" placeholder="https://your-app.up.railway.app" />
+
+<label for="manualUsername">Manual Username (fallback if native host unavailable)</label>
+<input id="manualUsername" placeholder="e.g. john.smith" />
+
+<button id="save">Save Settings</button>
+<div id="status"></div>
+
+<div class="info">
+  <strong>System Username:</strong> <span id="sysUser">Loading...</span><br>
+  <strong>Session ID:</strong> <span id="sessId">Loading...</span><br>
+  <strong>Retry Queue:</strong> <span id="queueLen">Loading...</span>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  chrome.storage.local.get(["serverUrl", "manualUsername"], (r) => {
+    if (r.serverUrl) $("serverUrl").value = r.serverUrl;
+    if (r.manualUsername) $("manualUsername").value = r.manualUsername;
+  });
+
+  $("save").addEventListener("click", () => {
+    const url = $("serverUrl").value.trim().replace(/\/$/, "");
+    const user = $("manualUsername").value.trim();
+    chrome.storage.local.set({ serverUrl: url, manualUsername: user }, () => {
+      $("status").className = "status ok";
+      $("status").textContent = "Saved successfully!";
+      setTimeout(() => $("status").textContent = "", 3000);
+    });
+  });
+
+  chrome.runtime.sendMessage({ type: "GET_STATUS" }, (r) => {
+    if (r) {
+      $("sysUser").textContent = r.systemUsername || "Not available";
+      $("sessId").textContent = r.sessionId || "Not available";
+      $("queueLen").textContent = r.queueLength ?? "N/A";
+    }
+  });
+</script>
+</body></html>
