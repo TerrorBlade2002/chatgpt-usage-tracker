@@ -4,6 +4,6 @@
   "path": "C:\\ProgramData\\GPTTracker\\get_username.bat",
   "type": "stdio",
   "allowed_origins": [
-    "chrome-extension://YOUR_EXTENSION_ID_HERE/"
+    "chrome-extension://pljmofcklpaakepnjheedoikkfepfhca/"
   ]
 }
