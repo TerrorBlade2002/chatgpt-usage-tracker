@@ -1,7 +1,7 @@
 // ============================================================
 // ChatGPT Usage Tracker - Background Service Worker
 // Handles: native messaging for username, API calls to server,
-// session management, retry queue, deduplication
+//          session management, retry queue, deduplication
 // ============================================================
 
 const NATIVE_HOST = "com.astraglobal.gpt_tracker";
@@ -12,6 +12,8 @@ let sessionId = null;
 let serverUrl = DEFAULT_SERVER_URL;
 let retryQueue = [];
 let isProcessingQueue = false;
+
+console.log("[BG] Background service worker starting...");
 
 // ---- UUID GENERATOR ----
 function generateUUID() {
@@ -25,14 +27,21 @@ function generateUUID() {
 async function hashKey(str) {
   const data = new TextEncoder().encode(str);
   const buf = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 // ---- LOAD CONFIG FROM STORAGE ----
 async function loadConfig() {
   return new Promise((resolve) => {
     chrome.storage.local.get(["serverUrl"], (result) => {
-      if (result.serverUrl) serverUrl = result.serverUrl;
+      if (result.serverUrl) {
+        serverUrl = result.serverUrl;
+        console.log("[BG] Using custom server URL:", serverUrl);
+      } else {
+        console.log("[BG] Using default server URL:", serverUrl);
+      }
       resolve();
     });
   });
@@ -42,21 +51,32 @@ async function loadConfig() {
 function fetchSystemUsername() {
   return new Promise((resolve) => {
     try {
-      chrome.runtime.sendNativeMessage(NATIVE_HOST, { action: "get_username" }, (response) => {
-        if (chrome.runtime.lastError) {
-          console.warn("[BG] Native messaging error:", chrome.runtime.lastError.message);
-          // Fallback: try from storage (user may have set it in options)
-          chrome.storage.local.get(["manualUsername"], (r) => {
-            resolve(r.manualUsername || "UNKNOWN_USER");
-          });
-          return;
+      console.log("[BG] Attempting native messaging to get username...");
+      chrome.runtime.sendNativeMessage(
+        NATIVE_HOST,
+        { action: "get_username" },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            console.warn(
+              "[BG] Native messaging error:",
+              chrome.runtime.lastError.message
+            );
+            chrome.storage.local.get(["manualUsername"], (r) => {
+              const fallback = r.manualUsername || "UNKNOWN_USER";
+              console.log("[BG] Using fallback username:", fallback);
+              resolve(fallback);
+            });
+            return;
+          }
+          if (response && response.username) {
+            console.log("[BG] Got username from native host:", response.username);
+            resolve(response.username);
+          } else {
+            console.warn("[BG] Native host returned no username");
+            resolve("UNKNOWN_USER");
+          }
         }
-        if (response && response.username) {
-          resolve(response.username);
-        } else {
-          resolve("UNKNOWN_USER");
-        }
-      });
+      );
     } catch (e) {
       console.warn("[BG] Native messaging unavailable:", e.message);
       chrome.storage.local.get(["manualUsername"], (r) => {
@@ -68,6 +88,7 @@ function fetchSystemUsername() {
 
 // ---- INITIALIZE SESSION ----
 async function initSession() {
+  console.log("[BG] Initializing session...");
   await loadConfig();
 
   // Check if we already have a cached username for this session
@@ -88,11 +109,17 @@ async function initSession() {
 
   // Cache in session storage (cleared when browser closes)
   chrome.storage.session.set({ systemUsername, sessionId });
-  console.log("[BG] New session:", systemUsername, sessionId);
+  console.log("[BG] New session created:", systemUsername, sessionId);
 }
 
 // ---- SEND LOG TO SERVER ----
 async function sendToServer(payload) {
+  // Ensure session is initialized
+  if (!sessionId) {
+    console.log("[BG] Session not ready, initializing...");
+    await initSession();
+  }
+
   const idempotencyKey = await hashKey(sessionId + "|" + payload.message_id);
 
   const body = {
@@ -107,8 +134,11 @@ async function sendToServer(payload) {
     timestamp: payload.timestamp,
   };
 
+  const url = serverUrl + "/api/log";
+  console.log("[BG] Sending to server:", url, JSON.stringify(body));
+
   try {
-    const resp = await fetch(serverUrl + "/api/log", {
+    const resp = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -117,19 +147,20 @@ async function sendToServer(payload) {
     if (!resp.ok) {
       const text = await resp.text();
       console.error("[BG] Server error:", resp.status, text);
-      // Add to retry queue if server error (not client error)
       if (resp.status >= 500) {
         retryQueue.push(body);
+        console.log("[BG] Added to retry queue. Queue size:", retryQueue.length);
       }
       return false;
     }
 
     const data = await resp.json();
-    console.log("[BG] Logged:", data);
+    console.log("[BG] Successfully logged! Response:", JSON.stringify(data));
     return true;
   } catch (e) {
     console.error("[BG] Network error:", e.message);
     retryQueue.push(body);
+    console.log("[BG] Added to retry queue. Queue size:", retryQueue.length);
     return false;
   }
 }
@@ -138,8 +169,9 @@ async function sendToServer(payload) {
 async function processRetryQueue() {
   if (isProcessingQueue || retryQueue.length === 0) return;
   isProcessingQueue = true;
+  console.log("[BG] Processing retry queue:", retryQueue.length, "items");
 
-  const batch = retryQueue.splice(0, 10); // Process up to 10 at a time
+  const batch = retryQueue.splice(0, 10);
   for (const item of batch) {
     try {
       const resp = await fetch(serverUrl + "/api/log", {
@@ -148,13 +180,14 @@ async function processRetryQueue() {
         body: JSON.stringify(item),
       });
       if (!resp.ok && resp.status >= 500) {
-        retryQueue.push(item); // Re-add for next retry
+        retryQueue.push(item);
+      } else {
+        console.log("[BG] Retry succeeded for:", item.gpt_name);
       }
     } catch (e) {
       retryQueue.push(item);
     }
   }
-
   isProcessingQueue = false;
 }
 
@@ -163,11 +196,12 @@ setInterval(processRetryQueue, 30000);
 
 // ---- MESSAGE LISTENER ----
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  console.log("[BG] Received message:", msg.type, "from tab:", sender.tab?.id);
+
   if (msg.type === "INIT") {
-    // Content script handshake
     if (!systemUsername) {
       initSession().then(() => {
-        // Respond and broadcast to all tabs
+        console.log("[BG] Session ready after INIT, broadcasting BG_READY");
         chrome.tabs.query({ url: "https://chatgpt.com/*" }, (tabs) => {
           tabs.forEach((tab) => {
             chrome.tabs.sendMessage(tab.id, { type: "BG_READY" }).catch(() => {});
@@ -175,17 +209,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         });
       });
     } else {
-      // Already initialized, respond immediately
-      try {
+      console.log("[BG] Already initialized, sending BG_READY to tab:", sender.tab?.id);
+      if (sender.tab?.id) {
         chrome.tabs.sendMessage(sender.tab.id, { type: "BG_READY" }).catch(() => {});
-      } catch (e) {}
+      }
     }
     sendResponse({ status: "ok" });
     return true;
   }
 
   if (msg.type === "LOG_EXCHANGE") {
+    console.log("[BG] LOG_EXCHANGE received:", msg.gpt_name, "turn:", msg.turn_number);
     sendToServer(msg).then((success) => {
+      console.log("[BG] sendToServer result:", success);
       sendResponse({ success });
     });
     return true; // Keep channel open for async response
@@ -215,4 +251,5 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 // Initialize on load
+console.log("[BG] Calling initSession on load...");
 initSession();
