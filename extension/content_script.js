@@ -2,37 +2,50 @@
   "use strict";
 
   const ALLOWED_GPTS = new Set([
-    "ARM Assist", "CDS SOP Assist", "CashLane Collections SOP Assist",
-    "CashLane Loans SOP Assist", "Asset Recovery Debt Collection Training",
+    "ARM Assist",
+    "CDS SOP Assist",
+    "CashLane Collections SOP Assist",
+    "CashLane Loans SOP Assist",
+    "Asset Recovery Debt Collection Training",
     "Key 2 Recovery Debt Collection Training",
     "Guglielmo & Associates Debt Collection Training",
     "EVEREST RECEIVABLES Debt Collection Training",
-    "Credit Card Debt Collection Training", "Auto Loan Debt Collection Trainer",
+    "Credit Card Debt Collection Training",
+    "Auto Loan Debt Collection Trainer",
     "Medical Debt Collector Trainer",
   ]);
 
-  let isTracking = false;
+  // ---- STATE ----
   let currentGptName = null;
   let currentConversationId = null;
-  let lastLoggedTurnCount = 0;
+  let lastLoggedExchangeCount = 0;
   let firstUserQuestion = null;
-  let observer = null;
-  let observedTarget = null;
-  let handshakeRetries = 0;
-  const MAX_RETRIES = 10;
-  const URL_POLL_MS = 800;
+  let bgReady = false;
 
-  function log(...a) { console.log("[GPT-Tracker]", ...a); }
+  // ---- LOGGING ----
+  function log(...a) {
+    console.log("[GPT-Tracker]", ...a);
+  }
 
+  // ---- URL CHECKS ----
   function isCustomGptUrl() {
     return /\/g\/g-[a-zA-Z0-9]+-/.test(window.location.pathname);
   }
 
+  function getConversationId() {
+    const m = window.location.pathname.match(/\/c\/([a-f0-9-]+)/);
+    return m ? m[1] : null;
+  }
+
+  // ---- GPT NAME EXTRACTION ----
   function extractGptName() {
+    // Method 1: from page title
     const m = document.title.match(/^ChatGPT\s*-\s*(.+)$/);
     if (m) return m[1].trim();
+    // Method 2: heading element
     const h = document.querySelector(".text-center.text-2xl.font-semibold");
     if (h) return h.textContent.trim();
+    // Method 3: sr-only labels
     for (const el of document.querySelectorAll(".sr-only")) {
       const s = el.textContent.match(/^(.+?)\s+said:$/);
       if (s && s[1] !== "You") return s[1].trim();
@@ -40,167 +53,181 @@
     return null;
   }
 
-  function isAllowedGpt(n) { return n && ALLOWED_GPTS.has(n); }
-
-  function getConversationId() {
-    const m = window.location.pathname.match(/\/c\/([a-f0-9-]+)/);
-    return m ? m[1] : null;
-  }
-
-  function countTurns() {
-    return document.querySelectorAll('[data-testid^="conversation-turn-"]').length;
-  }
-
-  function getFirstUserQuestion() {
-    const el = document.querySelector('[data-testid="conversation-turn-1"] [data-message-author-role="user"]');
-    if (!el) return null;
-    const w = el.textContent.trim().split(/\s+/);
-    return w.length <= 20 ? w.join(" ") : w.slice(0, 20).join(" ") + "...";
+  // ---- DOM QUERIES ----
+  function countAssistantMessages() {
+    return document.querySelectorAll('[data-message-author-role="assistant"]').length;
   }
 
   function getLatestAssistantMsgId() {
     const msgs = document.querySelectorAll('[data-message-author-role="assistant"]');
-    return msgs.length ? msgs[msgs.length - 1].getAttribute("data-message-id") : null;
+    if (msgs.length === 0) return null;
+    return msgs[msgs.length - 1].getAttribute("data-message-id");
   }
 
+  function getFirstUserQuestion() {
+    const el = document.querySelector('[data-message-author-role="user"]');
+    if (!el) return null;
+    const txt = el.textContent.trim();
+    const words = txt.split(/\s+/);
+    return words.length <= 20 ? words.join(" ") : words.slice(0, 20).join(" ") + "...";
+  }
+
+  // ---- SEND TO BACKGROUND ----
   function sendToBg(type, data) {
-    try {
-      chrome.runtime.sendMessage({ type, ...data }, () => {
-        if (chrome.runtime.lastError) log("BG err:", chrome.runtime.lastError.message);
-      });
-    } catch (e) { log("Send fail:", e.message); }
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ type, ...data }, (response) => {
+          if (chrome.runtime.lastError) {
+            log("BG send error:", chrome.runtime.lastError.message);
+            resolve(null);
+          } else {
+            resolve(response);
+          }
+        });
+      } catch (e) {
+        log("BG send exception:", e.message);
+        resolve(null);
+      }
+    });
   }
 
-  function logExchange() {
-    const turns = countTurns();
-    const ex = Math.floor(turns / 2);
-    if (ex <= lastLoggedTurnCount || ex === 0) return;
+  // ---- CORE: CHECK AND LOG NEW EXCHANGES ----
+  function checkForNewExchanges() {
+    // Gate 1: Must be on a custom GPT URL
+    if (!isCustomGptUrl()) return;
+
+    // Gate 2: Extract and validate GPT name
+    const name = extractGptName();
+    if (!name || !ALLOWED_GPTS.has(name)) return;
+
+    // Gate 3: Must have a conversation ID (means a chat is active)
     const cid = getConversationId();
     if (!cid) return;
-    if (!firstUserQuestion) firstUserQuestion = getFirstUserQuestion();
-    const mid = getLatestAssistantMsgId();
-    if (!mid) return;
 
-    // Check if conversation changed (new chat)
+    // Detect conversation change (new chat)
     if (currentConversationId && currentConversationId !== cid) {
-      log("New chat detected, resetting counts");
-      lastLoggedTurnCount = 0;
-      firstUserQuestion = getFirstUserQuestion();
+      log("Conversation changed:", currentConversationId, "->", cid);
+      lastLoggedExchangeCount = 0;
+      firstUserQuestion = null;
     }
+
+    currentGptName = name;
     currentConversationId = cid;
 
+    // Count completed exchanges (assistant messages = exchanges)
+    const exchangeCount = countAssistantMessages();
+    if (exchangeCount === 0) return;
+    if (exchangeCount <= lastLoggedExchangeCount) return;
+
+    // We have new exchanges to log
+    const msgId = getLatestAssistantMsgId();
+    if (!msgId) return;
+
+    if (!firstUserQuestion) {
+      firstUserQuestion = getFirstUserQuestion();
+    }
+
     const payload = {
-      gpt_name: currentGptName, conversation_id: cid, turn_number: ex,
-      first_question_summary: firstUserQuestion || "", message_id: mid,
+      gpt_name: name,
+      conversation_id: cid,
+      turn_number: exchangeCount,
+      first_question_summary: firstUserQuestion || "",
+      message_id: msgId,
       timestamp: new Date().toISOString(),
     };
-    log("Logging exchange:", JSON.stringify(payload));
-    sendToBg("LOG_EXCHANGE", payload);
-    lastLoggedTurnCount = ex;
-  }
 
-  function tryLogExchange() {
-    const t = countTurns();
-    if (t % 2 === 0 && t > 0) logExchange();
-  }
+    log("Logging exchange #" + exchangeCount + ":", JSON.stringify(payload));
 
-  // ---- OBSERVER: attaches to document.body to survive SPA re-renders ----
-  function startObserver() {
-    if (observer) observer.disconnect();
-
-    // CRITICAL FIX: observe document.body, not main, because main gets replaced
-    const target = document.body;
-    observedTarget = target;
-
-    observer = new MutationObserver(() => {
-      if (!isTracking) return;
-      // Debounced check for completed exchanges
-      clearTimeout(observer._debounce);
-      observer._debounce = setTimeout(tryLogExchange, 2500);
+    sendToBg("LOG_EXCHANGE", payload).then((resp) => {
+      if (resp) {
+        log("BG acknowledged:", JSON.stringify(resp));
+      } else {
+        log("BG did not respond (worker may be inactive)");
+      }
     });
 
-    observer.observe(target, { childList: true, subtree: true });
-    log("Observer started on body");
+    lastLoggedExchangeCount = exchangeCount;
   }
 
-  function stopTracking() {
-    if (observer) { observer.disconnect(); observer = null; }
-    isTracking = false; currentGptName = null; currentConversationId = null;
-    lastLoggedTurnCount = 0; firstUserQuestion = null; observedTarget = null;
-    log("Tracking stopped");
-  }
-
-  function attemptTracking() {
-    if (!isCustomGptUrl()) { if (isTracking) stopTracking(); return; }
-    const name = extractGptName();
-    if (!isAllowedGpt(name)) { if (isTracking) stopTracking(); return; }
-
-    // If GPT changed, full reset
-    if (currentGptName !== name) {
-      stopTracking();
-      currentGptName = name;
-    }
-
-    if (!isTracking) {
-      isTracking = true;
-      currentConversationId = getConversationId();
-      lastLoggedTurnCount = Math.floor(countTurns() / 2);
-      firstUserQuestion = getFirstUserQuestion();
-      log("ACTIVE: " + name + " baseline=" + lastLoggedTurnCount);
-      startObserver();
-    }
-
-    // CRITICAL FIX: even if already tracking, ensure observer is still connected
-    // ChatGPT SPA may replace DOM nodes. Re-attach if needed.
-    if (isTracking && !observer) {
-      log("Re-attaching observer (was disconnected)");
-      startObserver();
+  // ---- INIT: handshake with background ----
+  async function initBackground() {
+    log("Sending INIT to background...");
+    const resp = await sendToBg("INIT", { url: window.location.href });
+    if (resp) {
+      bgReady = true;
+      log("Background ready:", JSON.stringify(resp));
+    } else {
+      log("Background not responding, will retry...");
     }
   }
 
-  // ---- URL + DOM polling: catches SPA navigation AND detects completed exchanges ----
+  // Listen for BG_READY broadcast
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === "BG_READY") {
+      bgReady = true;
+      log("Received BG_READY broadcast");
+      checkForNewExchanges();
+    }
+  });
+
+  // ---- MAIN POLLING LOOP ----
+  // Simple, reliable polling every 3 seconds
+  // No complex mutation observers - just check the DOM state
   function startPolling() {
     let lastUrl = window.location.href;
-    let lastTurnCount = 0;
 
     setInterval(() => {
       const curUrl = window.location.href;
 
-      // URL changed - SPA navigation
+      // Detect URL change (SPA navigation)
       if (curUrl !== lastUrl) {
-        lastUrl = curUrl;
         log("URL changed:", curUrl);
-        setTimeout(attemptTracking, 500);
-      }
+        lastUrl = curUrl;
 
-      // Also poll for new turns directly (backup for missed MutationObserver events)
-      if (isTracking) {
-        const curTurns = countTurns();
-        if (curTurns !== lastTurnCount) {
-          lastTurnCount = curTurns;
-          if (curTurns % 2 === 0 && curTurns > 0) {
-            setTimeout(tryLogExchange, 1000);
-          }
+        // If navigated away from a GPT or to a different chat, reset
+        if (!isCustomGptUrl()) {
+          currentGptName = null;
+          currentConversationId = null;
+          lastLoggedExchangeCount = 0;
+          firstUserQuestion = null;
+          return;
         }
       }
-    }, URL_POLL_MS);
+
+      // Check for new exchanges
+      checkForNewExchanges();
+    }, 3000);
   }
 
-  function initHandshake() {
-    sendToBg("INIT", { url: window.location.href });
-    chrome.runtime.onMessage.addListener((msg) => {
-      if (msg.type === "BG_READY" || msg.type === "BG_BROADCAST_ALIVE") attemptTracking();
-    });
-    (function retry() {
-      if (handshakeRetries >= MAX_RETRIES) { attemptTracking(); return; }
-      handshakeRetries++;
-      setTimeout(() => { sendToBg("INIT", { url: window.location.href }); retry(); }, 500);
-    })();
-  }
-
+  // ---- STARTUP ----
   log("Content script loaded:", window.location.href);
-  initHandshake();
+
+  // Handshake with background (retry a few times)
+  initBackground();
+  let retryCount = 0;
+  const retryInterval = setInterval(() => {
+    if (bgReady || retryCount >= 5) {
+      clearInterval(retryInterval);
+      return;
+    }
+    retryCount++;
+    log("Retrying INIT #" + retryCount);
+    initBackground();
+  }, 2000);
+
+  // Start the polling loop
   startPolling();
-  const tEl = document.querySelector("title");
-  if (tEl) new MutationObserver(() => setTimeout(attemptTracking, 300)).observe(tEl, { childList: true });
+
+  // Also check immediately after a short delay (page may still be loading)
+  setTimeout(checkForNewExchanges, 2000);
+  setTimeout(checkForNewExchanges, 5000);
+  setTimeout(checkForNewExchanges, 10000);
+
+  // Watch for title changes (ChatGPT updates title on navigation)
+  const titleEl = document.querySelector("title");
+  if (titleEl) {
+    new MutationObserver(() => {
+      setTimeout(checkForNewExchanges, 1000);
+    }).observe(titleEl, { childList: true });
+  }
 })();
