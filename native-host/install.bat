@@ -37,7 +37,7 @@ set "VBS=%TEMP%\gpt_mkjson.vbs"
 >> "%VBS%" echo f.WriteLine "  ""path"": """ ^& batPath ^& ""","
 >> "%VBS%" echo f.WriteLine "  ""type"": ""stdio"","
 >> "%VBS%" echo f.WriteLine "  ""allowed_origins"": ["
->> "%VBS%" echo f.WriteLine "    ""chrome-extension://pljmofcklpaakepnjheedoikkfepfhca/"""
+>> "%VBS%" echo f.WriteLine "    ""chrome-extension://ndfelepbkmkcjbcgloakipoghcnakcga/"""
 >> "%VBS%" echo f.WriteLine "  ]"
 >> "%VBS%" echo f.WriteLine "}"
 >> "%VBS%" echo f.Close

@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Usage Tracker",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Tracks Custom GPT usage across agents for analytics and reporting",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmyuVWJxh8NKtG/o5bnIPyWhK52w32QPao61DMeNbVSaAPaGiBPFAtDm4JNm3SKXvTBa/H5l2BN0AuoKbwWY9DF0Q/lWFRXxhp5DugnDigaLHCB29bQp8of6PofiAvRCzZuIaSg9S4HeJFVG/NQH3LxE6Lux2hEWDH9wAW4m9+tJRXL9oW+grbAp8oqYMVFo22DtoJ/5f2OC/hJwR+Qa2vCyIHbgJkvJfhuD+xgbWueIRrO5ztd7WireY4ebA0SLUmnudBfnLA5QRzCqPzWauXKMRc7JoMeYN0+51fU9XtUaniC49zldmavqlRdb6o0YkSn+7IQVtU1rVfM2+l+pHAwIDAQAB",
   "permissions": [
     "storage",
     "nativeMessaging",
