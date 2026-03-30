@@ -1,7 +1,5 @@
 // ============================================================
 // ChatGPT Usage Tracker - Background Service Worker
-// Handles: native messaging for username, API calls to server,
-//          session management, retry queue, deduplication
 // ============================================================
 
 const NATIVE_HOST = "com.astraglobal.gpt_tracker";
@@ -15,7 +13,6 @@ let isProcessingQueue = false;
 
 console.log("[BG] Background service worker starting...");
 
-// ---- UUID GENERATOR ----
 function generateUUID() {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
@@ -23,62 +20,43 @@ function generateUUID() {
   });
 }
 
-// ---- SHA-256 HASH FOR IDEMPOTENCY KEY ----
 async function hashKey(str) {
   const data = new TextEncoder().encode(str);
   const buf = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(buf))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-// ---- LOAD CONFIG FROM STORAGE ----
 async function loadConfig() {
   return new Promise((resolve) => {
     chrome.storage.local.get(["serverUrl"], (result) => {
-      if (result.serverUrl) {
-        serverUrl = result.serverUrl;
-        console.log("[BG] Using custom server URL:", serverUrl);
-      } else {
-        console.log("[BG] Using default server URL:", serverUrl);
-      }
+      if (result.serverUrl) serverUrl = result.serverUrl;
+      console.log("[BG] Server URL:", serverUrl);
       resolve();
     });
   });
 }
 
-// ---- GET SYSTEM USERNAME VIA NATIVE MESSAGING ----
 function fetchSystemUsername() {
   return new Promise((resolve) => {
     try {
-      console.log("[BG] Attempting native messaging to get username...");
-      chrome.runtime.sendNativeMessage(
-        NATIVE_HOST,
-        { action: "get_username" },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            console.warn(
-              "[BG] Native messaging error:",
-              chrome.runtime.lastError.message
-            );
-            chrome.storage.local.get(["manualUsername"], (r) => {
-              const fallback = r.manualUsername || "UNKNOWN_USER";
-              console.log("[BG] Using fallback username:", fallback);
-              resolve(fallback);
-            });
-            return;
-          }
-          if (response && response.username) {
-            console.log("[BG] Got username from native host:", response.username);
-            resolve(response.username);
-          } else {
-            console.warn("[BG] Native host returned no username");
-            resolve("UNKNOWN_USER");
-          }
+      console.log("[BG] Attempting native messaging...");
+      chrome.runtime.sendNativeMessage(NATIVE_HOST, { action: "get_username" }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.warn("[BG] Native msg error:", chrome.runtime.lastError.message);
+          chrome.storage.local.get(["manualUsername"], (r) => {
+            resolve(r.manualUsername || "UNKNOWN_USER");
+          });
+          return;
         }
-      );
+        if (response && response.username) {
+          console.log("[BG] Got username:", response.username);
+          resolve(response.username);
+        } else {
+          resolve("UNKNOWN_USER");
+        }
+      });
     } catch (e) {
-      console.warn("[BG] Native messaging unavailable:", e.message);
+      console.warn("[BG] Native msg unavailable:", e.message);
       chrome.storage.local.get(["manualUsername"], (r) => {
         resolve(r.manualUsername || "UNKNOWN_USER");
       });
@@ -86,42 +64,53 @@ function fetchSystemUsername() {
   });
 }
 
-// ---- INITIALIZE SESSION ----
 async function initSession() {
   console.log("[BG] Initializing session...");
   await loadConfig();
-
-  // Check if we already have a cached username for this session
   const cached = await new Promise((r) =>
     chrome.storage.session.get(["systemUsername", "sessionId"], (d) => r(d))
   );
-
   if (cached.systemUsername && cached.sessionId) {
     systemUsername = cached.systemUsername;
     sessionId = cached.sessionId;
     console.log("[BG] Restored session:", systemUsername, sessionId);
     return;
   }
-
-  // Fetch fresh username
   systemUsername = await fetchSystemUsername();
   sessionId = generateUUID();
-
-  // Cache in session storage (cleared when browser closes)
   chrome.storage.session.set({ systemUsername, sessionId });
-  console.log("[BG] New session created:", systemUsername, sessionId);
+  console.log("[BG] New session:", systemUsername, sessionId);
 }
 
-// ---- SEND LOG TO SERVER ----
+// ---- RE-INJECT CONTENT SCRIPT INTO EXISTING TABS ----
+// This is critical: when the extension is reloaded/updated, all existing
+// ChatGPT tabs have a dead content script. We must re-inject fresh ones.
+async function reinjectContentScripts() {
+  console.log("[BG] Re-injecting content scripts into existing ChatGPT tabs...");
+  try {
+    const tabs = await chrome.tabs.query({ url: "https://chatgpt.com/*" });
+    for (const tab of tabs) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ["content_script.js"],
+        });
+        console.log("[BG] Re-injected into tab:", tab.id, tab.url);
+      } catch (e) {
+        console.warn("[BG] Failed to inject into tab", tab.id, ":", e.message);
+      }
+    }
+  } catch (e) {
+    console.warn("[BG] Re-injection failed:", e.message);
+  }
+}
+
 async function sendToServer(payload) {
-  // Ensure session is initialized
   if (!sessionId) {
     console.log("[BG] Session not ready, initializing...");
     await initSession();
   }
-
   const idempotencyKey = await hashKey(payload.conversation_id + "|" + payload.message_id);
-
   const body = {
     session_id: sessionId,
     system_username: systemUsername,
@@ -133,44 +122,32 @@ async function sendToServer(payload) {
     idempotency_key: idempotencyKey,
     timestamp: payload.timestamp,
   };
-
-  const url = serverUrl + "/api/log";
-  console.log("[BG] Sending to server:", url, JSON.stringify(body));
-
+  console.log("[BG] Sending to server:", JSON.stringify(body));
   try {
-    const resp = await fetch(url, {
+    const resp = await fetch(serverUrl + "/api/log", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-
     if (!resp.ok) {
       const text = await resp.text();
       console.error("[BG] Server error:", resp.status, text);
-      if (resp.status >= 500) {
-        retryQueue.push(body);
-        console.log("[BG] Added to retry queue. Queue size:", retryQueue.length);
-      }
+      if (resp.status >= 500) retryQueue.push(body);
       return false;
     }
-
     const data = await resp.json();
-    console.log("[BG] Successfully logged! Response:", JSON.stringify(data));
+    console.log("[BG] Logged OK:", JSON.stringify(data));
     return true;
   } catch (e) {
     console.error("[BG] Network error:", e.message);
     retryQueue.push(body);
-    console.log("[BG] Added to retry queue. Queue size:", retryQueue.length);
     return false;
   }
 }
 
-// ---- RETRY QUEUE PROCESSOR ----
 async function processRetryQueue() {
   if (isProcessingQueue || retryQueue.length === 0) return;
   isProcessingQueue = true;
-  console.log("[BG] Processing retry queue:", retryQueue.length, "items");
-
   const batch = retryQueue.splice(0, 10);
   for (const item of batch) {
     try {
@@ -179,11 +156,7 @@ async function processRetryQueue() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(item),
       });
-      if (!resp.ok && resp.status >= 500) {
-        retryQueue.push(item);
-      } else {
-        console.log("[BG] Retry succeeded for:", item.gpt_name);
-      }
+      if (!resp.ok && resp.status >= 500) retryQueue.push(item);
     } catch (e) {
       retryQueue.push(item);
     }
@@ -191,65 +164,58 @@ async function processRetryQueue() {
   isProcessingQueue = false;
 }
 
-// Retry queue runs every 30 seconds
 setInterval(processRetryQueue, 30000);
 
 // ---- MESSAGE LISTENER ----
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  console.log("[BG] Received message:", msg.type, "from tab:", sender.tab?.id);
+  console.log("[BG] Message:", msg.type, "from tab:", sender.tab?.id);
+
+  if (msg.type === "PING") {
+    sendResponse({ status: "alive" });
+    return true;
+  }
 
   if (msg.type === "INIT") {
     if (!systemUsername) {
       initSession().then(() => {
-        console.log("[BG] Session ready after INIT, broadcasting BG_READY");
         chrome.tabs.query({ url: "https://chatgpt.com/*" }, (tabs) => {
           tabs.forEach((tab) => {
             chrome.tabs.sendMessage(tab.id, { type: "BG_READY" }).catch(() => {});
           });
         });
       });
-    } else {
-      console.log("[BG] Already initialized, sending BG_READY to tab:", sender.tab?.id);
-      if (sender.tab?.id) {
-        chrome.tabs.sendMessage(sender.tab.id, { type: "BG_READY" }).catch(() => {});
-      }
+    } else if (sender.tab?.id) {
+      chrome.tabs.sendMessage(sender.tab.id, { type: "BG_READY" }).catch(() => {});
     }
     sendResponse({ status: "ok" });
     return true;
   }
 
   if (msg.type === "LOG_EXCHANGE") {
-    console.log("[BG] LOG_EXCHANGE received:", msg.gpt_name, "turn:", msg.turn_number);
+    console.log("[BG] LOG_EXCHANGE:", msg.gpt_name, "turn:", msg.turn_number);
     sendToServer(msg).then((success) => {
-      console.log("[BG] sendToServer result:", success);
       sendResponse({ success });
     });
-    return true; // Keep channel open for async response
+    return true;
   }
 
   if (msg.type === "GET_STATUS") {
-    sendResponse({
-      systemUsername,
-      sessionId,
-      serverUrl,
-      queueLength: retryQueue.length,
-    });
+    sendResponse({ systemUsername, sessionId, serverUrl, queueLength: retryQueue.length });
     return true;
   }
 });
 
 // ---- ON INSTALL / UPDATE ----
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(async () => {
   console.log("[BG] Extension installed/updated");
-  initSession();
+  await initSession();
+  // Re-inject content scripts into all existing ChatGPT tabs
+  await reinjectContentScripts();
 });
 
-// ---- ON STARTUP ----
 chrome.runtime.onStartup.addListener(() => {
   console.log("[BG] Browser startup");
   initSession();
 });
 
-// Initialize on load
-console.log("[BG] Calling initSession on load...");
 initSession();
