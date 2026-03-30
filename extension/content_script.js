@@ -43,6 +43,28 @@
     console.log("[GPT-Tracker]", ...a);
   }
 
+  // ---- CONTEXT CHECK ----
+  // Detects if extension context has been invalidated (e.g., extension reloaded)
+  // When dead, all intervals self-terminate so the old script stops completely.
+  let pollingIntervalId = null;
+  let keepaliveIntervalId = null;
+
+  function isContextAlive() {
+    try {
+      chrome.runtime.getURL("");
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function selfTerminate() {
+    log("Context invalidated - self-terminating all loops.");
+    if (pollingIntervalId) clearInterval(pollingIntervalId);
+    if (keepaliveIntervalId) clearInterval(keepaliveIntervalId);
+    window.__gptTrackerLoaded = false; // Allow fresh injection
+  }
+
   // ---- URL CHECKS ----
   function isCustomGptUrl() {
     return /\/g\/g-[a-zA-Z0-9]+-/.test(window.location.pathname);
@@ -124,7 +146,8 @@
   }
 
   // ---- KEEPALIVE: Ping background every 20s to prevent sleep ----
-  setInterval(() => {
+  keepaliveIntervalId = setInterval(() => {
+    if (!isContextAlive()) { selfTerminate(); return; }
     try {
       chrome.runtime.sendMessage({ type: "PING" }, (response) => {
         if (chrome.runtime.lastError) {
@@ -226,7 +249,9 @@
   function startPolling() {
     let lastUrl = window.location.href;
 
-    setInterval(() => {
+    pollingIntervalId = setInterval(() => {
+      if (!isContextAlive()) { selfTerminate(); return; }
+
       const curUrl = window.location.href;
 
       if (curUrl !== lastUrl) {
