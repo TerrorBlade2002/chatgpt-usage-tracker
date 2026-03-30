@@ -170,6 +170,12 @@
     const msgId = getLatestAssistantMsgId();
     if (!msgId) return;
 
+    // Skip placeholder IDs - response is still streaming, wait for real ID
+    if (msgId.startsWith("request-placeholder-")) {
+      log("Skipping placeholder message (still streaming):", msgId);
+      return;
+    }
+
     if (!firstUserQuestion) {
       firstUserQuestion = getFirstUserQuestion();
     }
