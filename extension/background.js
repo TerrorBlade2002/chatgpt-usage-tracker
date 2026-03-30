@@ -168,7 +168,7 @@ setInterval(processRetryQueue, 30000);
 
 // ---- MESSAGE LISTENER ----
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  console.log("[BG] Message:", msg.type, "from tab:", sender.tab?.id);
+  console.log("[BG] Received message:", msg.type, "from tab:", sender.tab?.id);
 
   if (msg.type === "PING") {
     sendResponse({ status: "alive" });
@@ -176,18 +176,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === "INIT") {
-    if (!systemUsername) {
-      initSession().then(() => {
-        chrome.tabs.query({ url: "https://chatgpt.com/*" }, (tabs) => {
-          tabs.forEach((tab) => {
-            chrome.tabs.sendMessage(tab.id, { type: "BG_READY" }).catch(() => {});
+    const doInit = async () => {
+      try {
+        if (!systemUsername) {
+          await initSession();
+          console.log("[BG] Session ready after INIT, broadcasting BG_READY");
+          chrome.tabs.query({ url: "https://chatgpt.com/*" }, (tabs) => {
+            tabs.forEach((tab) => {
+              chrome.tabs.sendMessage(tab.id, { type: "BG_READY" }).catch(() => {});
+            });
           });
-        });
-      });
-    } else if (sender.tab?.id) {
-      chrome.tabs.sendMessage(sender.tab.id, { type: "BG_READY" }).catch(() => {});
-    }
-    sendResponse({ status: "ok" });
+        } else {
+          console.log("[BG] Already initialized, sending BG_READY to tab:", sender.tab?.id);
+          if (sender.tab?.id) {
+            chrome.tabs.sendMessage(sender.tab.id, { type: "BG_READY" }).catch(() => {});
+          }
+        }
+        sendResponse({ status: "ok", username: systemUsername, sessionId });
+      } catch (e) {
+        console.error("[BG] INIT failed:", e.message);
+        sendResponse({ status: "error", error: e.message });
+      }
+    };
+    doInit();
     return true;
   }
 
@@ -208,14 +219,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ---- ON INSTALL / UPDATE ----
 chrome.runtime.onInstalled.addListener(async () => {
   console.log("[BG] Extension installed/updated");
-  await initSession();
-  // Re-inject content scripts into all existing ChatGPT tabs
-  await reinjectContentScripts();
+  initSession().catch((e) => console.error("[BG] initSession failed on install:", e.message));
 });
 
 chrome.runtime.onStartup.addListener(() => {
   console.log("[BG] Browser startup");
-  initSession();
+  initSession().catch((e) => console.error("[BG] initSession failed on startup:", e.message));
 });
 
-initSession();
+// Initialize on load
+console.log("[BG] Calling initSession on load...");
+initSession().catch((e) => console.error("[BG] initSession failed on load:", e.message));

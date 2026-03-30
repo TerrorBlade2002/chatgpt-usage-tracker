@@ -1,6 +1,14 @@
 (function () {
   "use strict";
 
+  // ---- DUPLICATE INSTANCE GUARD ----
+  // Prevents multiple content script instances from running on the same page
+  if (window.__gptTrackerLoaded) {
+    console.log("[GPT-Tracker] Already loaded, skipping duplicate instance.");
+    return;
+  }
+  window.__gptTrackerLoaded = true;
+
   const ALLOWED_GPTS = new Set([
     "ARM Assist",
     "CDS SOP Assist",
@@ -84,7 +92,7 @@
               log("Retrying in 1s (attempt " + (retries + 1) + ")...");
               setTimeout(() => {
                 sendToBg(type, data, retries + 1).then(resolve);
-              }, 1000);
+              }, 1000); 
             } else {
               resolve(null);
             }
@@ -94,11 +102,14 @@
         });
       } catch (e) {
         log("BG send exception:", e.message);
-        if (retries < 3 && e.message.includes("invalidated")) {
-          log("Queuing for retry...");
-          pendingQueue.push({ type, data });
-          resolve(null);
+        if (retries < 3) {
+          log("Retrying in 1.5s after exception (attempt " + (retries + 1) + ")...");
+          setTimeout(() => {
+            sendToBg(type, data, retries + 1).then(resolve);
+          }, 1500);
         } else {
+          log("All retries exhausted, queuing for later...");
+          pendingQueue.push({ type, data });
           resolve(null);
         }
       }
@@ -108,14 +119,16 @@
   // ---- KEEPALIVE: Ping background every 20s to prevent sleep ----
   setInterval(() => {
     try {
-      chrome.runtime.sendMessage({ type: "PING" }, () => {
+      chrome.runtime.sendMessage({ type: "PING" }, (response) => {
         if (chrome.runtime.lastError) {
-          // Worker woke up, process pending queue
-          if (pendingQueue.length > 0) {
-            log("Worker woke up, flushing " + pendingQueue.length + " pending messages");
-            const queue = pendingQueue.splice(0);
-            queue.forEach((item) => sendToBg(item.type, item.data));
-          }
+          log("PING failed (worker may be asleep):", chrome.runtime.lastError.message);
+          return;
+        }
+        // Worker is alive - flush any pending messages
+        if (pendingQueue.length > 0) {
+          log("Worker alive, flushing " + pendingQueue.length + " pending messages");
+          const queue = pendingQueue.splice(0);
+          queue.forEach((item) => sendToBg(item.type, item.data));
         }
       });
     } catch (e) {
@@ -166,14 +179,14 @@
     log("Logging exchange #" + exchangeCount + ":", JSON.stringify(payload));
 
     sendToBg("LOG_EXCHANGE", payload).then((resp) => {
-      if (resp) {
-        log("BG acknowledged:", JSON.stringify(resp));
+      if (resp && resp.success) {
+        log("BG acknowledged, confirmed turn #" + exchangeCount);
+        lastLoggedExchangeCount = exchangeCount;
       } else {
-        log("BG did not respond - message queued for retry");
+        log("BG did not confirm - will retry on next poll cycle");
+        // Do NOT bump lastLoggedExchangeCount so next poll retries this turn
       }
     });
-
-    lastLoggedExchangeCount = exchangeCount;
   }
 
   // ---- INIT ----
