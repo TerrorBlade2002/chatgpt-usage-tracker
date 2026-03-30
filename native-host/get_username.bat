@@ -1,15 +1,13 @@
 @echo off
-REM ============================================================
-REM Native Messaging Host for ChatGPT Usage Tracker
-REM Reads Windows %USERNAME% and returns as JSON to Chrome
-REM Uses PowerShell for reliable binary length prefix output
-REM ============================================================
-
-powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ^
-  "$json = '{"username":"' + $env:USERNAME + '"}'; " ^
-  "$bytes = [System.Text.Encoding]::UTF8.GetBytes($json); " ^
-  "$len = [BitConverter]::GetBytes([int]$bytes.Length); " ^
-  "$stdout = [Console]::OpenStandardOutput(); " ^
-  "$stdout.Write($len, 0, 4); " ^
-  "$stdout.Write($bytes, 0, $bytes.Length); " ^
-  "$stdout.Flush()"
+set "PS1=%TEMP%\gpt_tracker_nm.ps1"
+> "%PS1%" echo $u = $env:USERNAME
+>> "%PS1%" echo $json = '{"username":"' + $u + '"}'
+>> "%PS1%" echo $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+>> "%PS1%" echo $len = [System.BitConverter]::GetBytes([int32]$bytes.Length)
+>> "%PS1%" echo $out = [Console]::OpenStandardOutput()
+>> "%PS1%" echo $out.Write($len, 0, 4)
+>> "%PS1%" echo $out.Write($bytes, 0, $bytes.Length)
+>> "%PS1%" echo $out.Flush()
+>> "%PS1%" echo $out.Close()
+powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%PS1%"
+del "%PS1%" 2>nul
