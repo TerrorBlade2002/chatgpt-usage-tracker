@@ -120,7 +120,7 @@ async function sendToServer(payload) {
     await initSession();
   }
 
-  const idempotencyKey = await hashKey(sessionId + "|" + payload.message_id);
+  const idempotencyKey = await hashKey(payload.conversation_id + "|" + payload.message_id);
 
   const body = {
     session_id: sessionId,
