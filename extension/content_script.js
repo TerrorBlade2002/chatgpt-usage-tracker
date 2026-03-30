@@ -21,6 +21,7 @@
   let lastLoggedExchangeCount = 0;
   let firstUserQuestion = null;
   let bgReady = false;
+  let pendingQueue = []; // Queue for messages that failed due to worker sleep
 
   // ---- LOGGING ----
   function log(...a) {
@@ -39,13 +40,10 @@
 
   // ---- GPT NAME EXTRACTION ----
   function extractGptName() {
-    // Method 1: from page title
     const m = document.title.match(/^ChatGPT\s*-\s*(.+)$/);
     if (m) return m[1].trim();
-    // Method 2: heading element
     const h = document.querySelector(".text-center.text-2xl.font-semibold");
     if (h) return h.textContent.trim();
-    // Method 3: sr-only labels
     for (const el of document.querySelectorAll(".sr-only")) {
       const s = el.textContent.match(/^(.+?)\s+said:$/);
       if (s && s[1] !== "You") return s[1].trim();
@@ -72,39 +70,70 @@
     return words.length <= 20 ? words.join(" ") : words.slice(0, 20).join(" ") + "...";
   }
 
-  // ---- SEND TO BACKGROUND ----
-  function sendToBg(type, data) {
+  // ---- SEND TO BACKGROUND (with retry on worker sleep) ----
+  function sendToBg(type, data, retries) {
+    retries = retries || 0;
     return new Promise((resolve) => {
       try {
         chrome.runtime.sendMessage({ type, ...data }, (response) => {
           if (chrome.runtime.lastError) {
-            log("BG send error:", chrome.runtime.lastError.message);
-            resolve(null);
+            const err = chrome.runtime.lastError.message;
+            log("BG send error:", err);
+            // If context invalidated or disconnected, retry up to 3 times
+            if (retries < 3 && (err.includes("invalidated") || err.includes("disconnected") || err.includes("Receiving end does not exist"))) {
+              log("Retrying in 1s (attempt " + (retries + 1) + ")...");
+              setTimeout(() => {
+                sendToBg(type, data, retries + 1).then(resolve);
+              }, 1000);
+            } else {
+              resolve(null);
+            }
           } else {
             resolve(response);
           }
         });
       } catch (e) {
         log("BG send exception:", e.message);
-        resolve(null);
+        if (retries < 3 && e.message.includes("invalidated")) {
+          log("Queuing for retry...");
+          pendingQueue.push({ type, data });
+          resolve(null);
+        } else {
+          resolve(null);
+        }
       }
     });
   }
 
+  // ---- KEEPALIVE: Ping background every 20s to prevent sleep ----
+  setInterval(() => {
+    try {
+      chrome.runtime.sendMessage({ type: "PING" }, () => {
+        if (chrome.runtime.lastError) {
+          // Worker woke up, process pending queue
+          if (pendingQueue.length > 0) {
+            log("Worker woke up, flushing " + pendingQueue.length + " pending messages");
+            const queue = pendingQueue.splice(0);
+            queue.forEach((item) => sendToBg(item.type, item.data));
+          }
+        }
+      });
+    } catch (e) {
+      // Extension context fully invalidated - page needs reload
+    }
+  }, 20000);
+
   // ---- CORE: CHECK AND LOG NEW EXCHANGES ----
   function checkForNewExchanges() {
-    // Gate 1: Must be on a custom GPT URL
     if (!isCustomGptUrl()) return;
 
-    // Gate 2: Extract and validate GPT name
     const name = extractGptName();
     if (!name || !ALLOWED_GPTS.has(name)) return;
 
-    // Gate 3: Must have a conversation ID (means a chat is active)
     const cid = getConversationId();
     if (!cid) return;
 
-    // Detect conversation change (new chat)
+    // Detect conversation change
     if (currentConversationId && currentConversationId !== cid) {
       log("Conversation changed:", currentConversationId, "->", cid);
       lastLoggedExchangeCount = 0;
@@ -114,12 +143,10 @@
     currentGptName = name;
     currentConversationId = cid;
 
-    // Count completed exchanges (assistant messages = exchanges)
     const exchangeCount = countAssistantMessages();
     if (exchangeCount === 0) return;
     if (exchangeCount <= lastLoggedExchangeCount) return;
 
-    // We have new exchanges to log
     const msgId = getLatestAssistantMsgId();
     if (!msgId) return;
 
@@ -142,14 +169,14 @@
       if (resp) {
         log("BG acknowledged:", JSON.stringify(resp));
       } else {
-        log("BG did not respond (worker may be inactive)");
+        log("BG did not respond - message queued for retry");
       }
     });
 
     lastLoggedExchangeCount = exchangeCount;
   }
 
-  // ---- INIT: handshake with background ----
+  // ---- INIT ----
   async function initBackground() {
     log("Sending INIT to background...");
     const resp = await sendToBg("INIT", { url: window.location.href });
@@ -161,7 +188,6 @@
     }
   }
 
-  // Listen for BG_READY broadcast
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === "BG_READY") {
       bgReady = true;
@@ -170,21 +196,17 @@
     }
   });
 
-  // ---- MAIN POLLING LOOP ----
-  // Simple, reliable polling every 3 seconds
-  // No complex mutation observers - just check the DOM state
+  // ---- MAIN POLLING LOOP (every 3s) ----
   function startPolling() {
     let lastUrl = window.location.href;
 
     setInterval(() => {
       const curUrl = window.location.href;
 
-      // Detect URL change (SPA navigation)
       if (curUrl !== lastUrl) {
         log("URL changed:", curUrl);
         lastUrl = curUrl;
 
-        // If navigated away from a GPT or to a different chat, reset
         if (!isCustomGptUrl()) {
           currentGptName = null;
           currentConversationId = null;
@@ -194,7 +216,6 @@
         }
       }
 
-      // Check for new exchanges
       checkForNewExchanges();
     }, 3000);
   }
@@ -202,7 +223,6 @@
   // ---- STARTUP ----
   log("Content script loaded:", window.location.href);
 
-  // Handshake with background (retry a few times)
   initBackground();
   let retryCount = 0;
   const retryInterval = setInterval(() => {
@@ -215,15 +235,12 @@
     initBackground();
   }, 2000);
 
-  // Start the polling loop
   startPolling();
 
-  // Also check immediately after a short delay (page may still be loading)
   setTimeout(checkForNewExchanges, 2000);
   setTimeout(checkForNewExchanges, 5000);
   setTimeout(checkForNewExchanges, 10000);
 
-  // Watch for title changes (ChatGPT updates title on navigation)
   const titleEl = document.querySelector("title");
   if (titleEl) {
     new MutationObserver(() => {
