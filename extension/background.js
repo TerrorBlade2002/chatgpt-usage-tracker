@@ -110,7 +110,7 @@ async function sendToServer(payload) {
     console.log("[BG] Session not ready, initializing...");
     await initSession();
   }
-  const idempotencyKey = await hashKey(payload.conversation_id + "|" + payload.message_id);
+  const idempotencyKey = await hashKey(payload.message_id);
   const body = {
     session_id: sessionId,
     system_username: systemUsername,
