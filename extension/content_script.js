@@ -2,10 +2,17 @@
   "use strict";
 
   // ---- DUPLICATE INSTANCE GUARD ----
-  // Prevents multiple content script instances from running on the same page
+  // If a previous instance exists, check if its chrome.runtime context is still alive.
+  // After extension reload/update, the old script is orphaned (dead context) and
+  // a fresh injection must be allowed to take over.
   if (window.__gptTrackerLoaded) {
-    console.log("[GPT-Tracker] Already loaded, skipping duplicate instance.");
-    return;
+    try {
+      chrome.runtime.getURL(""); // throws if context is dead
+      console.log("[GPT-Tracker] Already loaded with live context, skipping.");
+      return;
+    } catch (e) {
+      console.log("[GPT-Tracker] Previous instance dead, reinitializing...");
+    }
   }
   window.__gptTrackerLoaded = true;
 

@@ -219,7 +219,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ---- ON INSTALL / UPDATE ----
 chrome.runtime.onInstalled.addListener(async () => {
   console.log("[BG] Extension installed/updated");
-  initSession().catch((e) => console.error("[BG] initSession failed on install:", e.message));
+  try {
+    await initSession();
+    await reinjectContentScripts();
+  } catch (e) {
+    console.error("[BG] onInstalled error:", e.message);
+  }
 });
 
 chrome.runtime.onStartup.addListener(() => {
