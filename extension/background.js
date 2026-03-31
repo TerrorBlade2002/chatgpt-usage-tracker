@@ -67,19 +67,27 @@ function fetchSystemUsername() {
 async function initSession() {
   console.log("[BG] Initializing session...");
   await loadConfig();
+
+  // Always fetch fresh username from native host so that a different
+  // Windows user on the same machine gets picked up immediately.
+  systemUsername = await fetchSystemUsername();
+
   const cached = await new Promise((r) =>
     chrome.storage.session.get(["systemUsername", "sessionId"], (d) => r(d))
   );
-  if (cached.systemUsername && cached.sessionId) {
-    systemUsername = cached.systemUsername;
+
+  // Reuse the existing sessionId only if the username hasn't changed.
+  // If the user switched (e.g., fast-user-switch or different login),
+  // generate a brand-new session.
+  if (cached.sessionId && cached.systemUsername === systemUsername) {
     sessionId = cached.sessionId;
-    console.log("[BG] Restored session:", systemUsername, sessionId);
-    return;
+    console.log("[BG] Restored session (same user):", systemUsername, sessionId);
+  } else {
+    sessionId = generateUUID();
+    console.log("[BG] New session (user changed or first run):", systemUsername, sessionId);
   }
-  systemUsername = await fetchSystemUsername();
-  sessionId = generateUUID();
+
   chrome.storage.session.set({ systemUsername, sessionId });
-  console.log("[BG] New session:", systemUsername, sessionId);
 }
 
 // ---- RE-INJECT CONTENT SCRIPT INTO EXISTING TABS ----

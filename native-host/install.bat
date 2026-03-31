@@ -1,8 +1,11 @@
 @echo off
 REM ============================================================
-REM Installer for ChatGPT Usage Tracker Native Messaging Host
+REM ChatGPT Usage Tracker - Native Messaging Host Installer
+REM SELF-CONTAINED: No additional files required - deploy this
+REM single .bat via GPO User Logon Script or login script.
 REM NO ADMIN REQUIRED - installs per-user under HKCU + LOCALAPPDATA
-REM For 400+ agent deployment via login script or GPO user script
+REM ============================================================
+REM Idempotent: safe to run on every logon (overwrites gracefully)
 REM ============================================================
 
 set "INSTALL_DIR=%LOCALAPPDATA%\GPTTracker"
@@ -15,16 +18,21 @@ echo  Installing for user: %USERNAME%
 echo ============================================================
 echo.
 
+REM ---- Step 1: Create install directory ----
 echo [1/4] Creating install directory...
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
 
-echo [2/4] Copying native host files...
-copy /Y "%~dp0get_username.bat" "%INSTALL_DIR%\get_username.bat"
+REM ---- Step 2: Write get_username.bat inline (no external file needed) ----
+echo [2/4] Writing get_username.bat...
+> "%INSTALL_DIR%\get_username.bat" echo @echo off
+>> "%INSTALL_DIR%\get_username.bat" echo REM Native messaging host for ChatGPT Usage Tracker
+>> "%INSTALL_DIR%\get_username.bat" echo REM Returns Windows username via Chrome native messaging protocol
+>> "%INSTALL_DIR%\get_username.bat" echo powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$u=$env:USERNAME;$j='{\"username\":\"'+$u+'\"}';$b=[Text.Encoding]::UTF8.GetBytes($j);$l=[BitConverter]::GetBytes([int32]$b.Length);$o=[Console]::OpenStandardOutput();$o.Write($l,0,4);$o.Write($b,0,$b.Length);$o.Flush();$o.Close()"
 
-echo [3/4] Generating native host manifest with correct path...
-REM Dynamically generate the JSON with properly escaped backslashes
-REM Using a temp VBS to handle the JSON path escaping reliably
-set "VBS=%TEMP%\gpt_mkjson.vbs"
+REM ---- Step 3: Generate native host manifest JSON ----
+echo [3/4] Generating native host manifest...
+REM Using a temp VBS to handle JSON path escaping reliably
+set "VBS=%TEMP%\gpt_mkjson_%RANDOM%.vbs"
 > "%VBS%" echo Set fso = CreateObject("Scripting.FileSystemObject")
 >> "%VBS%" echo installDir = "%INSTALL_DIR%"
 >> "%VBS%" echo hostName = "%HOST_NAME%"
@@ -44,8 +52,9 @@ set "VBS=%TEMP%\gpt_mkjson.vbs"
 cscript //nologo "%VBS%"
 del "%VBS%" 2>nul
 
-echo [4/4] Registering native messaging host in registry (HKCU - no admin needed)...
-reg add "%REG_KEY%" /ve /t REG_SZ /d "%INSTALL_DIR%\%HOST_NAME%.json" /f
+REM ---- Step 4: Register in HKCU (no admin) ----
+echo [4/4] Registering native messaging host in registry (HKCU)...
+reg add "%REG_KEY%" /ve /t REG_SZ /d "%INSTALL_DIR%\%HOST_NAME%.json" /f >nul 2>&1
 
 echo.
 echo Verifying installation...
@@ -86,6 +95,5 @@ if "%FAIL%"=="0" (
     echo ============================================================
 )
 echo.
-echo NOTE: If the Chrome extension ID changes, update the
-echo       allowed_origins in this script and re-run it.
-pause
+REM When deployed via GPO, remove or comment out the pause below.
+REM pause
