@@ -67,7 +67,7 @@ app.get("/api/reports/csv", async (req, res) => {
       limit: 50000, offset: 0,
     });
 
-    const headers = ["ID", "Session ID", "System Username", "GPT Name", "Conversation ID", "Turn Number", "First Question Summary", "Message ID", "Timestamp", "Created At"];
+    const headers = ["ID", "Session ID", "System Username", "GPT Name", "Conversation ID", "Turn Number", "First Question Summary", "Current Question Summary", "Message ID", "Timestamp", "Created At"];
     const csvRows = [headers.join(",")];
 
     for (const row of logs) {
@@ -79,6 +79,7 @@ app.get("/api/reports/csv", async (req, res) => {
         row.conversation_id,
         row.turn_number,
         `"${(row.first_question_summary || "").replace(/"/g, '""')}"`,
+        `"${(row.current_question_summary || "").replace(/"/g, '""')}"`,
         row.message_id,
         row.timestamp,
         row.created_at,

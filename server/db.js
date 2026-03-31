@@ -46,6 +46,12 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_logs_conversation ON conversation_logs(conversation_id)
     `);
 
+    // Add current_question_summary column if it doesn't exist (safe migration)
+    await client.query(`
+      ALTER TABLE conversation_logs
+      ADD COLUMN IF NOT EXISTS current_question_summary TEXT
+    `);
+
     console.log("Database initialized successfully");
   } finally {
     client.release();
@@ -53,15 +59,15 @@ async function initializeDatabase() {
 }
 
 async function logInteraction(data) {
-  const { session_id, system_username, gpt_name, conversation_id, turn_number, first_question_summary, message_id, idempotency_key, timestamp } = data;
+  const { session_id, system_username, gpt_name, conversation_id, turn_number, first_question_summary, current_question_summary, message_id, idempotency_key, timestamp } = data;
 
   const result = await pool.query(
     `INSERT INTO conversation_logs
-      (session_id, system_username, gpt_name, conversation_id, turn_number, first_question_summary, message_id, idempotency_key, timestamp)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      (session_id, system_username, gpt_name, conversation_id, turn_number, first_question_summary, current_question_summary, message_id, idempotency_key, timestamp)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON CONFLICT (idempotency_key) DO NOTHING
      RETURNING id, created_at`,
-    [session_id, system_username, gpt_name, conversation_id, turn_number, first_question_summary, message_id, idempotency_key, timestamp]
+    [session_id, system_username, gpt_name, conversation_id, turn_number, first_question_summary, current_question_summary, message_id, idempotency_key, timestamp]
   );
 
   if (result.rows.length === 0) {

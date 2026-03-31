@@ -118,6 +118,7 @@ async function sendToServer(payload) {
     conversation_id: payload.conversation_id,
     turn_number: payload.turn_number,
     first_question_summary: payload.first_question_summary,
+    current_question_summary: payload.current_question_summary,
     message_id: payload.message_id,
     idempotency_key: idempotencyKey,
     timestamp: payload.timestamp,

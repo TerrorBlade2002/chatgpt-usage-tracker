@@ -107,6 +107,14 @@
     return words.length <= 20 ? words.join(" ") : words.slice(0, 20).join(" ") + "...";
   }
 
+  function getCurrentQuestion() {
+    const msgs = document.querySelectorAll('[data-message-author-role="user"]');
+    if (msgs.length === 0) return null;
+    const txt = msgs[msgs.length - 1].textContent.trim();
+    const words = txt.split(/\s+/);
+    return words.length <= 20 ? words.join(" ") : words.slice(0, 20).join(" ") + "...";
+  }
+
   // ---- SEND TO BACKGROUND (with retry on worker sleep) ----
   function sendToBg(type, data, retries) {
     retries = retries || 0;
@@ -203,11 +211,14 @@
       firstUserQuestion = getFirstUserQuestion();
     }
 
+    const currentQuestion = getCurrentQuestion();
+
     const payload = {
       gpt_name: name,
       conversation_id: cid,
       turn_number: exchangeCount,
       first_question_summary: firstUserQuestion || "",
+      current_question_summary: currentQuestion || "",
       message_id: msgId,
       timestamp: new Date().toISOString(),
     };
