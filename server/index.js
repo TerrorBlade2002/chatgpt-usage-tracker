@@ -122,6 +122,22 @@ app.get("/api/filters", async (req, res) => {
 app.use("/dashboard", express.static(path.join(__dirname, "dashboard")));
 app.get("/", (req, res) => res.redirect("/dashboard"));
 
+// ---- DELETE /api/admin/reset - Clear all logs (requires secret) ----
+app.delete("/api/admin/reset", async (req, res) => {
+  const secret = req.headers["x-admin-secret"];
+  if (secret !== (process.env.ADMIN_SECRET || "astraglobal-reset-2026")) {
+    return res.status(403).json({ error: "Unauthorized" });
+  }
+  try {
+    const result = await db.pool.query("DELETE FROM conversation_logs");
+    await db.pool.query("ALTER SEQUENCE conversation_logs_id_seq RESTART WITH 1");
+    res.json({ success: true, deleted: result.rowCount });
+  } catch (error) {
+    console.error("Reset error:", error);
+    res.status(500).json({ error: "Failed to reset" });
+  }
+});
+
 // Error handler
 app.use((err, req, res, next) => {
   console.error("Unhandled:", err);
