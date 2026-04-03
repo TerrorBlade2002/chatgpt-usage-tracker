@@ -118,6 +118,11 @@ app.get("/api/filters", async (req, res) => {
   }
 });
 
+// Public privacy policy page for Chrome Web Store submission
+app.get("/privacy-policy", (req, res) => {
+  res.sendFile(path.join(__dirname, "dashboard", "privacy-policy.html"));
+});
+
 // Serve dashboard
 app.use("/dashboard", express.static(path.join(__dirname, "dashboard")));
 app.get("/", (req, res) => res.redirect("/dashboard"));

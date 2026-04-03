@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy - ChatGPT Usage Tracker</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f9fc;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #4b5563;
+      --accent: #0f766e;
+      --border: #e5e7eb;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    .wrap {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 32px 20px 48px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+    }
+
+    h1, h2 { margin-top: 0; color: #111827; }
+    h1 { font-size: 30px; margin-bottom: 8px; }
+    h2 { font-size: 20px; margin-top: 28px; }
+    p, li { color: var(--muted); }
+    .meta { margin-bottom: 24px; color: var(--muted); }
+    a { color: var(--accent); }
+    ul { padding-left: 22px; }
+    .note {
+      background: #ecfeff;
+      border: 1px solid #a5f3fc;
+      color: #155e75;
+      padding: 14px 16px;
+      border-radius: 10px;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Privacy Policy</h1>
+      <div class="meta">ChatGPT Usage Tracker Extension</div>
+
+      <p>
+        This Privacy Policy describes how the ChatGPT Usage Tracker Chrome extension collects,
+        uses, and stores information for internal enterprise usage reporting.
+      </p>
+
+      <h2>Information We Collect</h2>
+      <ul>
+        <li>Windows system username of the signed-in user</li>
+        <li>GPT name being used</li>
+        <li>Conversation ID and message ID</li>
+        <li>Turn number</li>
+        <li>First question summary and current question summary</li>
+        <li>Session ID and timestamps</li>
+      </ul>
+
+      <h2>How Information Is Collected</h2>
+      <p>
+        The extension runs on ChatGPT pages and captures limited usage metadata from supported GPT conversations.
+        On managed Windows systems, a local native messaging host is used only to obtain the currently signed-in
+        Windows username so records can be associated with the correct employee account.
+      </p>
+
+      <h2>How We Use the Information</h2>
+      <ul>
+        <li>To create internal usage reports for supported GPT tools</li>
+        <li>To identify which employee session generated a tracked interaction</li>
+        <li>To support reporting, auditing, and operational analytics</li>
+        <li>To troubleshoot failed or duplicate logging events</li>
+      </ul>
+
+      <h2>Where Data Is Sent</h2>
+      <p>
+        Usage data is transmitted over HTTPS to the organization-managed reporting server for storage and dashboard reporting.
+      </p>
+
+      <h2>What We Do Not Do</h2>
+      <ul>
+        <li>We do not sell personal information.</li>
+        <li>We do not use the extension for advertising purposes.</li>
+        <li>We do not download or execute remote code through the extension.</li>
+      </ul>
+
+      <h2>Data Sharing</h2>
+      <p>
+        Data is intended for internal business use only and is accessible only to authorized personnel responsible for reporting,
+        analytics, administration, or support.
+      </p>
+
+      <h2>Data Retention</h2>
+      <p>
+        Data is retained according to internal business and operational requirements. Retention periods may be adjusted by the organization.
+      </p>
+
+      <h2>Security</h2>
+      <p>
+        Reasonable administrative and technical safeguards are used to protect stored data and data transmitted to the reporting server.
+      </p>
+
+      <h2>Contact</h2>
+      <p>
+        For questions about this Privacy Policy or the extension deployment, contact your internal IT or system administrator.
+      </p>
+
+      <div class="note">
+        Effective date: April 4, 2026
+      </div>
+    </div>
+  </div>
+</body>
+</html>
