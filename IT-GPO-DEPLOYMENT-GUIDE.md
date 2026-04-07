@@ -132,7 +132,7 @@ Each entry must look like this:
 
 Example:
 
-- `YOUR_CHROME_WEB_STORE_EXTENSION_ID;https://clients2.google.com/service/update2/crx`
+- `fccndghbhjcjiikkjbppancdhdmgbkme;https://clients2.google.com/service/update2/crx`
 
 ### Steps
 
